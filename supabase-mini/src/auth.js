@@ -1,4 +1,5 @@
 const { request } = require('./request');
+const runtime = require('./runtime');
 
 async function signUp(credentials = {}, options = {}) {
   const { email, password, data } = credentials;
@@ -6,11 +7,14 @@ async function signUp(credentials = {}, options = {}) {
     throw new Error('signUp(): email and password are required');
   }
 
-  return request('auth/v1/signup', {
+  const result = await request('auth/v1/signup', {
     method: 'POST',
     body: { email, password, data },
     ...options,
   });
+
+  runtime.saveSession(result);
+  return result;
 }
 
 async function signIn(credentials = {}, options = {}) {
@@ -19,7 +23,7 @@ async function signIn(credentials = {}, options = {}) {
     throw new Error('signIn(): email and password are required');
   }
 
-  return request('auth/v1/token?grant_type=password', {
+  const result = await request('auth/v1/token?grant_type=password', {
     method: 'POST',
     body: {
       email,
@@ -27,6 +31,9 @@ async function signIn(credentials = {}, options = {}) {
     },
     ...options,
   });
+
+  runtime.saveSession(result);
+  return result;
 }
 
 async function refresh(refreshToken, options = {}) {
@@ -34,13 +41,16 @@ async function refresh(refreshToken, options = {}) {
     throw new Error('refresh(): refreshToken is required');
   }
 
-  return request('auth/v1/token?grant_type=refresh_token', {
+  const result = await request('auth/v1/token?grant_type=refresh_token', {
     method: 'POST',
     body: {
       refresh_token: refreshToken,
     },
     ...options,
   });
+
+  runtime.saveSession(result);
+  return result;
 }
 
 async function getUser(options = {}) {
@@ -53,11 +63,22 @@ async function getUser(options = {}) {
 async function logout(options = {}) {
   const { refreshToken } = options;
 
-  return request('auth/v1/logout', {
+  const result = await request('auth/v1/logout', {
     method: 'POST',
     body: refreshToken ? { refresh_token: refreshToken } : undefined,
     ...options,
   });
+
+  runtime.clearSession();
+  return result;
+}
+
+function saveSession(session = {}) {
+  runtime.saveSession(session);
+}
+
+function clearSession() {
+  runtime.clearSession();
 }
 
 module.exports = {
@@ -66,4 +87,6 @@ module.exports = {
   refresh,
   getUser,
   logout,
+  saveSession,
+  clearSession,
 };

@@ -3,6 +3,7 @@ const auth = require('./auth');
 const db = require('./db');
 const filters = require('./filters');
 const functions = require('./functions');
+const runtime = require('./runtime');
 
 module.exports = {
   request,
@@ -10,4 +11,5 @@ module.exports = {
   db,
   filters,
   functions,
+  runtime,
 };
