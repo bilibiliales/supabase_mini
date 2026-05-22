@@ -1,0 +1,13 @@
+{
+  "name": "supabase-mini",
+  "version": "0.1.0",
+  "description": "A lightweight Supabase REST runtime for Node.js script containers.",
+  "main": "supabase-mini/src/index.js",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "esbuild": "^0.19.0"
+  }
+}

@@ -1,11 +1,22 @@
 const DEFAULT_TIMEOUT = 30000;
 const runtime = require('./runtime');
+let refreshingPromise = null;
 
 function buildHeaders(options = {}) {
   const headers = {
-    'Content-Type': 'application/json',
     ...options.headers,
   };
+
+  const method = (options.method || 'GET').toUpperCase();
+  const hasBody = options.body !== undefined && options.body !== null;
+
+  if (hasBody && !headers['Content-Type'] && !headers['content-type']) {
+    if (options.body instanceof URLSearchParams) {
+      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    } else {
+      headers['Content-Type'] = 'application/json';
+    }
+  }
 
   const apiKey = options.apikey || runtime.getApiKey();
   if (apiKey) {
@@ -51,12 +62,55 @@ function normalizeResponse(response) {
   });
 }
 
-async function request(path, options = {}) {
+function getBodyPayload(options) {
+  if (options.body === undefined || options.body === null) {
+    return undefined;
+  }
+
+  if (typeof options.body === 'string') {
+    return options.body;
+  }
+
+  if (options.body instanceof URLSearchParams) {
+    return options.body.toString();
+  }
+
+  return JSON.stringify(options.body);
+}
+
+async function refreshSession(baseUrl, apiKey) {
+  if (!refreshingPromise) {
+    refreshingPromise = (async () => {
+      const refreshToken = runtime.getRefreshToken();
+      if (!refreshToken) {
+        throw new Error('No refresh token available for session refresh');
+      }
+
+      const { refresh } = require('./auth');
+      const result = await refresh(refreshToken, {
+        baseUrl,
+        apikey: apiKey,
+        _retry: true,
+      });
+
+      runtime.saveSession(result);
+      return result;
+    })();
+
+    refreshingPromise.finally(() => {
+      refreshingPromise = null;
+    });
+  }
+
+  return refreshingPromise;
+}
+
+async function executeRequest(path, options = {}) {
   if (!path) {
     throw new Error('request(): path is required');
   }
 
-  const baseUrl = options.baseUrl || getEnvValue('SUPABASE_URL');
+  const baseUrl = options.baseUrl || runtime.getUrl();
   if (!baseUrl) {
     throw new Error('request(): SUPABASE_URL is required in environment variables or options');
   }
@@ -74,14 +128,9 @@ async function request(path, options = {}) {
     signal: controller.signal,
   };
 
-  if (options.body !== undefined && options.body !== null) {
-    if (typeof options.body === 'string') {
-      fetchOptions.body = options.body;
-    } else if (options.body instanceof URLSearchParams) {
-      fetchOptions.body = options.body.toString();
-    } else {
-      fetchOptions.body = JSON.stringify(options.body);
-    }
+  const bodyPayload = getBodyPayload(options);
+  if (bodyPayload !== undefined) {
+    fetchOptions.body = bodyPayload;
   }
 
   let response;
@@ -99,26 +148,16 @@ async function request(path, options = {}) {
   const normalized = await normalizeResponse(response);
 
   if (!response.ok && response.status === 401 && !options._retry) {
-    const refreshToken = runtime.getRefreshToken();
-    if (refreshToken) {
-      try {
-        const { refresh } = require('./auth');
-        const refreshResult = await refresh(refreshToken, {
-          baseUrl,
-          apikey: options.apikey || runtime.getApiKey(),
-          _retry: true,
-        });
-
-        runtime.saveSession(refreshResult);
-        const retryOptions = {
-          ...options,
-          token: refreshResult.access_token || options.token,
-          _retry: true,
-        };
-        return request(path, retryOptions);
-      } catch (refreshError) {
-        runtime.clearSession();
-      }
+    try {
+      const refreshResult = await refreshSession(baseUrl, options.apikey || runtime.getApiKey());
+      const retryOptions = {
+        ...options,
+        token: refreshResult.access_token || options.token,
+        _retry: true,
+      };
+      return executeRequest(path, retryOptions);
+    } catch (refreshError) {
+      runtime.clearSession();
     }
   }
 
@@ -131,6 +170,10 @@ async function request(path, options = {}) {
   }
 
   return normalized.body;
+}
+
+async function request(path, options = {}) {
+  return executeRequest(path, options);
 }
 
 module.exports = {
