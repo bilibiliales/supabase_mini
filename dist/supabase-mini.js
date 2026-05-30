@@ -1,1 +1,635 @@
-var SupabaseMini=(()=>{var c=(e,r)=>()=>(r||e((r={exports:{}}).exports,r),r.exports);var g=c((_e,p)=>{function l(e){if(typeof getVar=="function")return getVar(e,"global");if(typeof process!="undefined"&&process.env)return process.env[e]}function d(e,r){if(typeof setVar=="function")return setVar(e,r,"global");typeof process!="undefined"&&process.env&&(r===void 0?delete process.env[e]:process.env[e]=r)}function V(){return l("SUPABASE_URL")}function I(){return l("SUPABASE_API_KEY")||l("SUPABASE_ANON_KEY")}function L(){return l("SUPABASE_ACCESS_TOKEN")||l("SUPABASE_BEARER_TOKEN")}function H(){return l("SUPABASE_REFRESH_TOKEN")}function F(e={}){!e||typeof e!="object"||(e.access_token&&d("SUPABASE_ACCESS_TOKEN",e.access_token),e.refresh_token&&d("SUPABASE_REFRESH_TOKEN",e.refresh_token),e.supabaseUrl&&d("SUPABASE_URL",e.supabaseUrl),e.apiKey&&d("SUPABASE_API_KEY",e.apiKey))}function G(){d("SUPABASE_ACCESS_TOKEN",void 0),d("SUPABASE_REFRESH_TOKEN",void 0)}p.exports={getUrl:V,getApiKey:I,getAccessToken:L,getRefreshToken:H,saveSession:F,clearSession:G}});var _=c((Pe,$)=>{var{request:w}=S(),h=g();async function D(e={},r={}){let{email:t,password:n,data:i}=e;if(!t||!n)throw new Error("signUp(): email and password are required");let s=await w("auth/v1/signup",{method:"POST",body:{email:t,password:n,data:i},...r});return h.saveSession(s),s}async function z(e={},r={}){let{email:t,password:n}=e;if(!t||!n)throw new Error("signIn(): email and password are required");let i=await w("auth/v1/token?grant_type=password",{method:"POST",body:{email:t,password:n},...r});return h.saveSession(i),i}async function J(e,r={}){if(!e)throw new Error("refresh(): refreshToken is required");let t=await w("auth/v1/token?grant_type=refresh_token",{method:"POST",body:{refresh_token:e},...r});return h.saveSession(t),t}async function Y(e={}){return w("auth/v1/user",{method:"GET",...e})}async function M(e={}){let{refreshToken:r}=e,t=await w("auth/v1/logout",{method:"POST",body:r?{refresh_token:r}:void 0,...e});return h.clearSession(),t}function Q(e={}){h.saveSession(e)}function W(){h.clearSession()}$.exports={signUp:D,signIn:z,refresh:J,getUser:Y,logout:M,saveSession:Q,clearSession:W}});var S=c((Ue,v)=>{var f=g(),m=null;function X(e={}){let r={...e.headers},t=(e.method||"GET").toUpperCase();e.body!==void 0&&e.body!==null&&!r["Content-Type"]&&!r["content-type"]&&(e.body instanceof URLSearchParams?r["Content-Type"]="application/x-www-form-urlencoded":r["Content-Type"]="application/json");let i=e.apikey||f.getApiKey();i&&(r.apikey=i);let s=e.token||f.getAccessToken();return s&&(r.Authorization=`Bearer ${s}`),r}function Z(e){return e.text().then(r=>{let t=e.headers.get("content-type")||"";if(!r)return{status:e.status,ok:e.ok,body:null};if(t.includes("application/json"))try{return{status:e.status,ok:e.ok,body:JSON.parse(r)}}catch(n){throw new Error(`Failed to parse JSON response: ${n.message}`)}return{status:e.status,ok:e.ok,body:r}})}function ee(e){if(!(e.body===void 0||e.body===null))return typeof e.body=="string"?e.body:e.body instanceof URLSearchParams?e.body.toString():JSON.stringify(e.body)}async function re(e,r){return m||(m=(async()=>{let t=f.getRefreshToken();if(!t)throw new Error("No refresh token available for session refresh");let{refresh:n}=_(),i=await n(t,{baseUrl:e,apikey:r,_retry:!0});return f.saveSession(i),i})(),m.finally(()=>{m=null})),m}async function O(e,r={}){if(!e)throw new Error("request(): path is required");let t=r.baseUrl||f.getUrl();if(!t)throw new Error("request(): SUPABASE_URL is required in environment variables or options");let n=e.startsWith("http")?e:`${t.replace(/\/$/,"")}/${e.replace(/^\//,"")}`,i=r.timeout!=null?r.timeout:3e4,s=new AbortController,T=setTimeout(()=>{s.abort()},i),P={method:r.method||"GET",headers:X(r),signal:s.signal},U=ee(r);U!==void 0&&(P.body=U);let o;try{o=await fetch(n,P)}catch(a){throw a.name==="AbortError"?new Error(`Request timed out after ${i}ms: ${n}`):new Error(`Network error while requesting ${n}: ${a.message}`)}finally{clearTimeout(T)}let y=await Z(o);if(!o.ok&&o.status===401&&!r._retry)try{let a=await re(t,r.apikey||f.getApiKey()),E={...r,token:a.access_token||r.token,_retry:!0};return O(e,E)}catch(a){f.clearSession()}if(!o.ok){let a=y.body&&y.body.message?y.body.message:o.statusText,E=new Error(`Request failed: ${o.status} ${a}`);throw E.status=o.status,E.body=y.body,E}return y.body}async function te(e,r={}){return O(e,r)}v.exports={request:te}});var B=c((pe,R)=>{var{request:b}=S();function u(e){return encodeURIComponent(String(e))}function q(e,r){let n=(e.Prefer||e.prefer||"").split(",").map(i=>i.trim()).filter(Boolean);n.includes(r)||n.push(r),e.Prefer=n.join(",")}function A(e={}){let r={...e.headers};return e.schema&&(r["Accept-Profile"]=e.schema),e.profile&&(r["Content-Profile"]=e.profile),e.count&&q(r,"count=exact"),{...e,headers:r}}function ne(e={}){let r=[];if(e.select){let n=Array.isArray(e.select)?e.select.join(","):e.select;r.push(`select=${u(n)}`)}return[["eq","eq"],["neq","neq"],["gt","gt"],["gte","gte"],["lt","lt"],["lte","lte"],["like","like"],["ilike","ilike"]].forEach(([n,i])=>{e[n]&&Object.entries(e[n]).forEach(([s,T])=>{r.push(`${u(s)}=${i}.${u(T)}`)})}),e.in&&Object.entries(e.in).forEach(([n,i])=>{let s=Array.isArray(i)?i.map(String).map(u).join(","):u(i);r.push(`${u(n)}=in.(${s})`)}),e.is&&Object.entries(e.is).forEach(([n,i])=>{let s=i===null?"null":u(i);r.push(`${u(n)}=is.${s}`)}),e.order&&r.push(`order=${u(e.order)}`),e.limit!=null&&r.push(`limit=${u(e.limit)}`),e.offset!=null&&r.push(`offset=${u(e.offset)}`),r.join("&")}function k(e,r={}){let t=ne(r),n=`rest/v1/${e}`;return t?`${n}?${t}`:n}async function ie(e,r={}){if(!e)throw new Error("select(): table is required");r=A(r);let t=k(e,r);return b(t,{method:"GET",...r})}async function se(e,r,t={}){if(!e)throw new Error("insert(): table is required");if(r==null)throw new Error("insert(): rows are required");t=A(t),q(t.headers,"return=representation");let n=k(e,t);return b(n,{method:"POST",...t,body:r})}async function ue(e,r,t={}){if(!e)throw new Error("update(): table is required");if(r==null)throw new Error("update(): changes are required");t=A(t),q(t.headers,"return=representation");let n=k(e,t);return b(n,{method:"PATCH",...t,body:r})}async function oe(e,r={}){if(!e)throw new Error("delete(): table is required");r=A(r),q(r.headers,"return=representation");let t=k(e,r);return b(t,{method:"DELETE",...r})}async function ae(e,r={},t={}){if(!e)throw new Error("rpc(): function name is required");return b(`rest/v1/rpc/${e}`,{method:"POST",body:r,...t})}R.exports={select:ie,insert:se,update:ue,delete:oe,rpc:ae}});var C=c(($e,K)=>{function ce(e,r){if(!e)throw new Error("eq(): field is required");return{eq:{[e]:r}}}function fe(e,r){if(!e)throw new Error("neq(): field is required");return{neq:{[e]:r}}}function de(e,r){if(!e)throw new Error("gt(): field is required");return{gt:{[e]:r}}}function le(e,r){if(!e)throw new Error("lt(): field is required");return{lt:{[e]:r}}}function he(e,r="asc"){if(!e)throw new Error("order(): field is required");return{order:`${e}.${r}`}}function ye(e){if(e==null||e<0)throw new Error("limit(): count must be a non-negative number");return{limit:e}}K.exports={eq:ce,neq:fe,gt:de,lt:le,order:he,limit:ye}});var j=c((Oe,N)=>{var{request:Ee}=S();async function we(e,r={},t={}){if(!e)throw new Error("invoke(): functionName is required");return Ee(`functions/v1/${e}`,{method:t.method||"POST",body:r,...t})}N.exports={invoke:we}});var ke=c((ve,x)=>{var{request:Se}=S(),me=_(),be=B(),ge=C(),qe=j(),Ae=g();x.exports={request:Se,auth:me,db:be,filters:ge,functions:qe,runtime:Ae}});return ke();})();
+var Supabase = (() => {
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __commonJS = (cb, mod) => function __require() {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  };
+
+  // supabase-mini/src/runtime.js
+  var require_runtime = __commonJS({
+    "supabase-mini/src/runtime.js"(exports, module) {
+      function getVarValue(name) {
+        if (typeof zdjl !== "undefined" && typeof zdjl.getVar === "function") {
+          return zdjl.getVar(name, "global");
+        }
+        if (typeof process !== "undefined" && process.env) {
+          return process.env[name];
+        }
+        return void 0;
+      }
+      function setVarValue(name, value) {
+        if (typeof zdjl !== "undefined" && typeof zdjl.setVar === "function") {
+          return zdjl.setVar(name, value, "global");
+        }
+        if (typeof process !== "undefined" && process.env) {
+          if (value === void 0) {
+            delete process.env[name];
+          } else {
+            process.env[name] = value;
+          }
+        }
+      }
+      function getUrl() {
+        return getVarValue("SUPABASE_URL");
+      }
+      function getApiKey() {
+        return getVarValue("SUPABASE_API_KEY") || getVarValue("SUPABASE_PUBLISHABLE_KEY");
+      }
+      function getAccessToken() {
+        return getVarValue("SUPABASE_ACCESS_TOKEN") || getVarValue("SUPABASE_BEARER_TOKEN");
+      }
+      function getRefreshToken() {
+        return getVarValue("SUPABASE_REFRESH_TOKEN");
+      }
+      function saveSession(session = {}) {
+        if (!session || typeof session !== "object") {
+          return;
+        }
+        if (session.access_token) {
+          setVarValue("SUPABASE_ACCESS_TOKEN", session.access_token);
+        }
+        if (session.refresh_token) {
+          setVarValue("SUPABASE_REFRESH_TOKEN", session.refresh_token);
+        }
+      }
+      function clearSession() {
+        setVarValue("SUPABASE_ACCESS_TOKEN", void 0);
+        setVarValue("SUPABASE_REFRESH_TOKEN", void 0);
+      }
+      module.exports = {
+        getUrl,
+        getApiKey,
+        getAccessToken,
+        getRefreshToken,
+        saveSession,
+        clearSession
+      };
+    }
+  });
+
+  // supabase-mini/src/auth.js
+  var require_auth = __commonJS({
+    "supabase-mini/src/auth.js"(exports, module) {
+      var { request } = require_request();
+      var runtime = require_runtime();
+      async function signUp(credentials = {}, options = {}) {
+        const { email, password, data } = credentials;
+        if (!email || !password) {
+          throw new Error("signUp(): email and password are required");
+        }
+        const result = await request("auth/v1/signup", {
+          method: "POST",
+          body: { email, password, data },
+          ...options
+        });
+        runtime.saveSession(result);
+        return result;
+      }
+      async function signIn(credentials = {}, options = {}) {
+        const { email, password } = credentials;
+        if (!email || !password) {
+          throw new Error("signIn(): email and password are required");
+        }
+        const result = await request("auth/v1/token?grant_type=password", {
+          method: "POST",
+          body: {
+            email,
+            password
+          },
+          ...options
+        });
+        runtime.saveSession(result);
+        return result;
+      }
+      async function refresh(refreshToken, options = {}) {
+        if (!refreshToken) {
+          throw new Error("refresh(): refreshToken is required");
+        }
+        const result = await request("auth/v1/token?grant_type=refresh_token", {
+          method: "POST",
+          body: {
+            refresh_token: refreshToken
+          },
+          ...options
+        });
+        runtime.saveSession(result);
+        return result;
+      }
+      async function getUser(options = {}) {
+        return request("auth/v1/user", {
+          method: "GET",
+          ...options
+        });
+      }
+      async function logout(options = {}) {
+        const { refreshToken } = options;
+        const result = await request("auth/v1/logout", {
+          method: "POST",
+          body: refreshToken ? { refresh_token: refreshToken } : void 0,
+          ...options
+        });
+        runtime.clearSession();
+        return result;
+      }
+      function saveSession(session = {}) {
+        runtime.saveSession(session);
+      }
+      function clearSession() {
+        runtime.clearSession();
+      }
+      module.exports = {
+        signUp,
+        signIn,
+        refresh,
+        getUser,
+        logout,
+        saveSession,
+        clearSession
+      };
+    }
+  });
+
+  // supabase-mini/src/request.js
+  var require_request = __commonJS({
+    "supabase-mini/src/request.js"(exports, module) {
+      var DEFAULT_TIMEOUT = 3e4;
+      var runtime = require_runtime();
+      var refreshingPromise = null;
+      function buildHeaders(options = {}) {
+        const headers = {
+          ...options.headers
+        };
+        const method = (options.method || "GET").toUpperCase();
+        const hasBody = options.body !== void 0 && options.body !== null;
+        if (hasBody && !headers["Content-Type"] && !headers["content-type"]) {
+          if (options.body instanceof URLSearchParams) {
+            headers["Content-Type"] = "application/x-www-form-urlencoded";
+          } else {
+            headers["Content-Type"] = "application/json";
+          }
+        }
+        const apiKey = options.apikey || runtime.getApiKey();
+        if (apiKey) {
+          headers.apikey = apiKey;
+        }
+        const token = options.token || runtime.getAccessToken();
+        if (token) {
+          headers.Authorization = `Bearer ${token}`;
+        }
+        return headers;
+      }
+      function normalizeResponse(response) {
+        return response.text().then((text) => {
+          const contentType = response.headers.get("content-type") || "";
+          if (!text) {
+            return {
+              status: response.status,
+              ok: response.ok,
+              body: null
+            };
+          }
+          if (contentType.includes("application/json")) {
+            try {
+              return {
+                status: response.status,
+                ok: response.ok,
+                body: JSON.parse(text)
+              };
+            } catch (error) {
+              throw new Error(`Failed to parse JSON response: ${error.message}`);
+            }
+          }
+          return {
+            status: response.status,
+            ok: response.ok,
+            body: text
+          };
+        });
+      }
+      function getBodyPayload(options) {
+        if (options.body === void 0 || options.body === null) {
+          return void 0;
+        }
+        if (typeof options.body === "string") {
+          return options.body;
+        }
+        if (options.body instanceof URLSearchParams) {
+          return options.body.toString();
+        }
+        return JSON.stringify(options.body);
+      }
+      async function refreshSession(baseUrl, apiKey) {
+        if (!refreshingPromise) {
+          refreshingPromise = (async () => {
+            const refreshToken = runtime.getRefreshToken();
+            if (!refreshToken) {
+              throw new Error("No refresh token available for session refresh");
+            }
+            const { refresh } = require_auth();
+            const result = await refresh(refreshToken, {
+              baseUrl,
+              apikey: apiKey,
+              _retry: true
+            });
+            runtime.saveSession(result);
+            return result;
+          })();
+          refreshingPromise.finally(() => {
+            refreshingPromise = null;
+          });
+        }
+        return refreshingPromise;
+      }
+      async function executeRequest(path, options = {}) {
+        if (!path) {
+          throw new Error("request(): path is required");
+        }
+        const baseUrl = options.baseUrl || runtime.getUrl();
+        if (!baseUrl) {
+          throw new Error("request(): SUPABASE_URL is required in environment variables or options");
+        }
+        const url = path.startsWith("http") ? path : `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+        const timeout = options.timeout != null ? options.timeout : DEFAULT_TIMEOUT;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+          controller.abort();
+        }, timeout);
+        const fetchOptions = {
+          method: options.method || "GET",
+          headers: buildHeaders(options),
+          signal: controller.signal
+        };
+        const bodyPayload = getBodyPayload(options);
+        if (bodyPayload !== void 0) {
+          fetchOptions.body = bodyPayload;
+        }
+        let response;
+        try {
+          response = await fetch(url, fetchOptions);
+        } catch (networkError) {
+          if (networkError.name === "AbortError") {
+            throw new Error(`Request timed out after ${timeout}ms: ${url}`);
+          }
+          throw new Error(`Network error while requesting ${url}: ${networkError.message}`);
+        } finally {
+          clearTimeout(timeoutId);
+        }
+        const normalized = await normalizeResponse(response);
+        if (!response.ok && response.status === 401 && !options._retry) {
+          try {
+            const refreshResult = await refreshSession(baseUrl, options.apikey || runtime.getApiKey());
+            const retryOptions = {
+              ...options,
+              token: refreshResult.access_token || options.token,
+              _retry: true
+            };
+            return executeRequest(path, retryOptions);
+          } catch (refreshError) {
+            runtime.clearSession();
+          }
+        }
+        if (!response.ok) {
+          const message = normalized.body && normalized.body.message ? normalized.body.message : response.statusText;
+          const error = new Error(`Request failed: ${response.status} ${message}`);
+          error.status = response.status;
+          error.body = normalized.body;
+          throw error;
+        }
+        return normalized.body;
+      }
+      async function request(path, options = {}) {
+        return executeRequest(path, options);
+      }
+      module.exports = {
+        request
+      };
+    }
+  });
+
+  // supabase-mini/src/db.js
+  var require_db = __commonJS({
+    "supabase-mini/src/db.js"(exports, module) {
+      var { request } = require_request();
+      function encodeQueryValue(value) {
+        return encodeURIComponent(String(value));
+      }
+      function buildPreferHeader(headers, value) {
+        const existing = headers.Prefer || headers.prefer || "";
+        const values = existing.split(",").map((item) => item.trim()).filter(Boolean);
+        if (!values.includes(value)) {
+          values.push(value);
+        }
+        headers.Prefer = values.join(",");
+      }
+      function addDbHeaders(options = {}) {
+        const headers = {
+          ...options.headers
+        };
+        const readSchema = options.readSchema || options.schema;
+        const writeSchema = options.writeSchema || options.profile;
+        if (readSchema) {
+          headers["Accept-Profile"] = readSchema;
+        }
+        if (writeSchema) {
+          headers["Content-Profile"] = writeSchema;
+        }
+        if (options.count) {
+          const countMode = typeof options.count === "string" ? options.count : "exact";
+          buildPreferHeader(headers, `count=${countMode}`);
+        }
+        return {
+          ...options,
+          headers
+        };
+      }
+      function buildQueryString(options = {}) {
+        const parts = [];
+        if (options.select) {
+          const selectValue = Array.isArray(options.select) ? options.select.join(",") : options.select;
+          parts.push(`select=${encodeQueryValue(selectValue)}`);
+        }
+        const filters = [
+          ["eq", "eq"],
+          ["neq", "neq"],
+          ["gt", "gt"],
+          ["gte", "gte"],
+          ["lt", "lt"],
+          ["lte", "lte"],
+          ["like", "like"],
+          ["ilike", "ilike"]
+        ];
+        filters.forEach(([optionKey, operator]) => {
+          if (options[optionKey]) {
+            Object.entries(options[optionKey]).forEach(([key, value]) => {
+              parts.push(`${encodeQueryValue(key)}=${operator}.${encodeQueryValue(value)}`);
+            });
+          }
+        });
+        if (options.not) {
+          Object.entries(options.not).forEach(([op, obj]) => {
+            if (obj && typeof obj === "object") {
+              Object.entries(obj).forEach(([key, value]) => {
+                const encoded = value === null ? "null" : encodeQueryValue(value);
+                parts.push(`${encodeQueryValue(key)}=not.${op}.${encoded}`);
+              });
+            }
+          });
+        }
+        if (options["in"]) {
+          Object.entries(options["in"]).forEach(([key, value]) => {
+            const makeQuoted = (v) => {
+              const s = String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+              return `"${s}"`;
+            };
+            const raw = Array.isArray(value) ? value.map(makeQuoted).join(",") : makeQuoted(value);
+            const encodedRaw = encodeURIComponent(raw);
+            parts.push(`${encodeQueryValue(key)}=in.(${encodedRaw})`);
+          });
+        }
+        if (options.is) {
+          Object.entries(options.is).forEach(([key, value]) => {
+            const encoded = value === null ? "null" : encodeQueryValue(value);
+            parts.push(`${encodeQueryValue(key)}=is.${encoded}`);
+          });
+        }
+        if (options.order) {
+          parts.push(`order=${encodeQueryValue(options.order)}`);
+        }
+        if (options.limit != null) {
+          parts.push(`limit=${encodeQueryValue(options.limit)}`);
+        }
+        if (options.offset != null) {
+          parts.push(`offset=${encodeQueryValue(options.offset)}`);
+        }
+        return parts.join("&");
+      }
+      function buildPath(table, options = {}) {
+        const query = buildQueryString(options);
+        const basePath = `rest/v1/${table}`;
+        return query ? `${basePath}?${query}` : basePath;
+      }
+      async function select(table, options = {}) {
+        if (!table) {
+          throw new Error("select(): table is required");
+        }
+        options = addDbHeaders(options);
+        const path = buildPath(table, options);
+        return request(path, {
+          method: "GET",
+          ...options
+        });
+      }
+      async function single(table, options = {}) {
+        if (!table) {
+          throw new Error("single(): table is required");
+        }
+        options = addDbHeaders(options);
+        const path = buildPath(table, options);
+        return request(path, {
+          method: "GET",
+          headers: {
+            Accept: "application/vnd.pgrst.object+json",
+            ...options.headers
+          },
+          ...options
+        });
+      }
+      async function maybeSingle(table, options = {}) {
+        if (!table) {
+          throw new Error("maybeSingle(): table is required");
+        }
+        options = addDbHeaders(options);
+        const path = buildPath(table, options);
+        try {
+          return await request(path, {
+            method: "GET",
+            headers: {
+              Accept: "application/vnd.pgrst.object+json",
+              ...options.headers
+            },
+            ...options
+          });
+        } catch (err) {
+          if (err && err.status === 406) {
+            return null;
+          }
+          throw err;
+        }
+      }
+      async function insert(table, rows, options = {}) {
+        if (!table) {
+          throw new Error("insert(): table is required");
+        }
+        if (rows === void 0 || rows === null) {
+          throw new Error("insert(): rows are required");
+        }
+        options = addDbHeaders(options);
+        buildPreferHeader(options.headers, "return=representation");
+        const path = buildPath(table, options);
+        return request(path, {
+          method: "POST",
+          ...options,
+          body: rows
+        });
+      }
+      async function update(table, changes, options = {}) {
+        if (!table) {
+          throw new Error("update(): table is required");
+        }
+        if (changes === void 0 || changes === null) {
+          throw new Error("update(): changes are required");
+        }
+        options = addDbHeaders(options);
+        buildPreferHeader(options.headers, "return=representation");
+        const path = buildPath(table, options);
+        return request(path, {
+          method: "PATCH",
+          ...options,
+          body: changes
+        });
+      }
+      async function remove(table, options = {}) {
+        if (!table) {
+          throw new Error("delete(): table is required");
+        }
+        options = addDbHeaders(options);
+        buildPreferHeader(options.headers, "return=representation");
+        const path = buildPath(table, options);
+        return request(path, {
+          method: "DELETE",
+          ...options
+        });
+      }
+      async function rpc(fn, params = {}, options = {}) {
+        if (!fn) {
+          throw new Error("rpc(): function name is required");
+        }
+        return request(`rest/v1/rpc/${fn}`, {
+          method: "POST",
+          body: params,
+          ...options
+        });
+      }
+      module.exports = {
+        select,
+        single,
+        maybeSingle,
+        insert,
+        update,
+        delete: remove,
+        rpc
+      };
+    }
+  });
+
+  // supabase-mini/src/filters.js
+  var require_filters = __commonJS({
+    "supabase-mini/src/filters.js"(exports, module) {
+      function eq(field, value) {
+        if (!field) {
+          throw new Error("eq(): field is required");
+        }
+        return {
+          eq: {
+            [field]: value
+          }
+        };
+      }
+      function neq(field, value) {
+        if (!field) {
+          throw new Error("neq(): field is required");
+        }
+        return {
+          neq: {
+            [field]: value
+          }
+        };
+      }
+      function gt(field, value) {
+        if (!field) {
+          throw new Error("gt(): field is required");
+        }
+        return {
+          gt: {
+            [field]: value
+          }
+        };
+      }
+      function lt(field, value) {
+        if (!field) {
+          throw new Error("lt(): field is required");
+        }
+        return {
+          lt: {
+            [field]: value
+          }
+        };
+      }
+      function order(field, direction = "asc") {
+        if (!field) {
+          throw new Error("order(): field is required");
+        }
+        return {
+          order: `${field}.${direction}`
+        };
+      }
+      function limit(count) {
+        if (count == null || count < 0) {
+          throw new Error("limit(): count must be a non-negative number");
+        }
+        return {
+          limit: count
+        };
+      }
+      module.exports = {
+        eq,
+        neq,
+        gt,
+        lt,
+        order,
+        limit
+      };
+    }
+  });
+
+  // supabase-mini/src/functions.js
+  var require_functions = __commonJS({
+    "supabase-mini/src/functions.js"(exports, module) {
+      var { request } = require_request();
+      async function invoke(functionName, data = {}, options = {}) {
+        if (!functionName) {
+          throw new Error("invoke(): functionName is required");
+        }
+        return request(`functions/v1/${functionName}`, {
+          method: options.method || "POST",
+          body: data,
+          ...options
+        });
+      }
+      module.exports = {
+        invoke
+      };
+    }
+  });
+
+  // supabase-mini/src/index.js
+  var require_src = __commonJS({
+    "supabase-mini/src/index.js"(exports, module) {
+      var { request } = require_request();
+      var auth = require_auth();
+      var db = require_db();
+      var filters = require_filters();
+      var functions = require_functions();
+      var runtime = require_runtime();
+      module.exports = {
+        request,
+        auth,
+        db,
+        filters,
+        functions,
+        runtime
+      };
+    }
+  });
+  return require_src();
+})();
+zdjl.setVar("Supabase", Supabase, "global");

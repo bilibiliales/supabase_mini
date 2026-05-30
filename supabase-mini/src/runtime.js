@@ -1,6 +1,6 @@
 function getVarValue(name) {
-  if (typeof getVar === 'function') {
-    return getVar(name, 'global');
+  if (typeof zdjl !== 'undefined' && typeof zdjl.getVar === 'function') {
+    return zdjl.getVar(name, 'global');
   }
 
   if (typeof process !== 'undefined' && process.env) {
@@ -11,8 +11,8 @@ function getVarValue(name) {
 }
 
 function setVarValue(name, value) {
-  if (typeof setVar === 'function') {
-    return setVar(name, value, 'global');
+  if (typeof zdjl !== 'undefined' && typeof zdjl.setVar === 'function') {
+    return zdjl.setVar(name, value, 'global');
   }
 
   if (typeof process !== 'undefined' && process.env) {
@@ -29,7 +29,7 @@ function getUrl() {
 }
 
 function getApiKey() {
-  return getVarValue('SUPABASE_API_KEY') || getVarValue('SUPABASE_ANON_KEY');
+  return getVarValue('SUPABASE_API_KEY') || getVarValue('SUPABASE_PUBLISHABLE_KEY');
 }
 
 function getAccessToken() {
@@ -51,14 +51,6 @@ function saveSession(session = {}) {
 
   if (session.refresh_token) {
     setVarValue('SUPABASE_REFRESH_TOKEN', session.refresh_token);
-  }
-
-  if (session.supabaseUrl) {
-    setVarValue('SUPABASE_URL', session.supabaseUrl);
-  }
-
-  if (session.apiKey) {
-    setVarValue('SUPABASE_API_KEY', session.apiKey);
   }
 }
 

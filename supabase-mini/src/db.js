@@ -23,16 +23,22 @@ function addDbHeaders(options = {}) {
     ...options.headers,
   };
 
-  if (options.schema) {
-    headers['Accept-Profile'] = options.schema;
+  // support both legacy and clearer names
+  const readSchema = options.readSchema || options.schema;
+  const writeSchema = options.writeSchema || options.profile;
+
+  if (readSchema) {
+    headers['Accept-Profile'] = readSchema;
   }
 
-  if (options.profile) {
-    headers['Content-Profile'] = options.profile;
+  if (writeSchema) {
+    headers['Content-Profile'] = writeSchema;
   }
 
   if (options.count) {
-    buildPreferHeader(headers, 'count=exact');
+    // options.count can be boolean or string ('exact'|'planned'|'estimated')
+    const countMode = typeof options.count === 'string' ? options.count : 'exact';
+    buildPreferHeader(headers, `count=${countMode}`);
   }
 
   return {
@@ -68,10 +74,30 @@ function buildQueryString(options = {}) {
     }
   });
 
+  // support not.<op> e.g. not.eq, not.is
+  if (options.not) {
+    Object.entries(options.not).forEach(([op, obj]) => {
+      if (obj && typeof obj === 'object') {
+        Object.entries(obj).forEach(([key, value]) => {
+          const encoded = value === null ? 'null' : encodeQueryValue(value);
+          parts.push(`${encodeQueryValue(key)}=not.${op}.${encoded}`);
+        });
+      }
+    });
+  }
+
   if (options['in']) {
     Object.entries(options['in']).forEach(([key, value]) => {
-      const values = Array.isArray(value) ? value.map(String).map(encodeQueryValue).join(',') : encodeQueryValue(value);
-      parts.push(`${encodeQueryValue(key)}=in.(${values})`);
+      // quote-aware encoder: wrap string values in double-quotes and escape inner quotes
+      const makeQuoted = (v) => {
+        const s = String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        return `"${s}"`;
+      };
+
+      const raw = Array.isArray(value) ? value.map(makeQuoted).join(',') : makeQuoted(value);
+      // encode the inner content to be safe in URL
+      const encodedRaw = encodeURIComponent(raw);
+      parts.push(`${encodeQueryValue(key)}=in.(${encodedRaw})`);
     });
   }
 
@@ -131,6 +157,31 @@ async function single(table, options = {}) {
     },
     ...options,
   });
+}
+
+async function maybeSingle(table, options = {}) {
+  if (!table) {
+    throw new Error('maybeSingle(): table is required');
+  }
+
+  options = addDbHeaders(options);
+  const path = buildPath(table, options);
+  try {
+    return await request(path, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/vnd.pgrst.object+json',
+        ...options.headers,
+      },
+      ...options,
+    });
+  } catch (err) {
+    // PostgREST returns 406 when no rows for object; treat as null
+    if (err && err.status === 406) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 async function insert(table, rows, options = {}) {
@@ -202,6 +253,8 @@ async function rpc(fn, params = {}, options = {}) {
 
 module.exports = {
   select,
+  single,
+  maybeSingle,
   insert,
   update,
   delete: remove,
