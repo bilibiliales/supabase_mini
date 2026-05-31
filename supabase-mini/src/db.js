@@ -1,5 +1,22 @@
 const { request } = require('./request');
 
+function withClient(options, client) {
+  if (!client) {
+    return options;
+  }
+
+  return {
+    ...options,
+    client,
+  };
+}
+
+function requireClient(options = {}, methodName = 'db') {
+  if (!options.client) {
+    throw new Error(`${methodName}(): must be called from a Supabase client`);
+  }
+}
+
 function encodeQueryValue(value) {
   return encodeURIComponent(String(value));
 }
@@ -130,6 +147,8 @@ function buildPath(table, options = {}) {
 }
 
 async function select(table, options = {}) {
+  requireClient(options, 'select');
+
   if (!table) {
     throw new Error('select(): table is required');
   }
@@ -143,6 +162,8 @@ async function select(table, options = {}) {
 }
 
 async function single(table, options = {}) {
+  requireClient(options, 'single');
+
   if (!table) {
     throw new Error('single(): table is required');
   }
@@ -151,15 +172,17 @@ async function single(table, options = {}) {
   const path = buildPath(table, options);
   return request(path, {
     method: 'GET',
-    headers: {
-      Accept: 'application/vnd.pgrst.object+json',
-      ...options.headers,
-    },
     ...options,
+    headers: {
+      ...options.headers,
+      Accept: 'application/vnd.pgrst.object+json',
+    },
   });
 }
 
 async function maybeSingle(table, options = {}) {
+  requireClient(options, 'maybeSingle');
+
   if (!table) {
     throw new Error('maybeSingle(): table is required');
   }
@@ -169,11 +192,11 @@ async function maybeSingle(table, options = {}) {
   try {
     return await request(path, {
       method: 'GET',
-      headers: {
-        Accept: 'application/vnd.pgrst.object+json',
-        ...options.headers,
-      },
       ...options,
+      headers: {
+        ...options.headers,
+        Accept: 'application/vnd.pgrst.object+json',
+      },
     });
   } catch (err) {
     // PostgREST returns 406 when no rows for object; treat as null
@@ -185,6 +208,8 @@ async function maybeSingle(table, options = {}) {
 }
 
 async function insert(table, rows, options = {}) {
+  requireClient(options, 'insert');
+
   if (!table) {
     throw new Error('insert(): table is required');
   }
@@ -205,6 +230,8 @@ async function insert(table, rows, options = {}) {
 }
 
 async function update(table, changes, options = {}) {
+  requireClient(options, 'update');
+
   if (!table) {
     throw new Error('update(): table is required');
   }
@@ -225,6 +252,8 @@ async function update(table, changes, options = {}) {
 }
 
 async function remove(table, options = {}) {
+  requireClient(options, 'delete');
+
   if (!table) {
     throw new Error('delete(): table is required');
   }
@@ -240,6 +269,8 @@ async function remove(table, options = {}) {
 }
 
 async function rpc(fn, params = {}, options = {}) {
+  requireClient(options, 'rpc');
+
   if (!fn) {
     throw new Error('rpc(): function name is required');
   }
@@ -252,6 +283,31 @@ async function rpc(fn, params = {}, options = {}) {
 }
 
 module.exports = {
+  createDb(client) {
+    return {
+      select(table, options = {}) {
+        return select(table, withClient(options, client));
+      },
+      single(table, options = {}) {
+        return single(table, withClient(options, client));
+      },
+      maybeSingle(table, options = {}) {
+        return maybeSingle(table, withClient(options, client));
+      },
+      insert(table, rows, options = {}) {
+        return insert(table, rows, withClient(options, client));
+      },
+      update(table, changes, options = {}) {
+        return update(table, changes, withClient(options, client));
+      },
+      delete(table, options = {}) {
+        return remove(table, withClient(options, client));
+      },
+      rpc(fn, params = {}, options = {}) {
+        return rpc(fn, params, withClient(options, client));
+      },
+    };
+  },
   select,
   single,
   maybeSingle,

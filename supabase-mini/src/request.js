@@ -1,11 +1,32 @@
 const DEFAULT_TIMEOUT = 30000;
-const runtime = require('./runtime');
-let refreshingPromise = null;
+const refreshingPromisesByClient = new WeakMap();
 
-function buildHeaders(options = {}) {
+function getSessionValue(client, key) {
+  if (client && client[key]) {
+    return client[key];
+  }
+
+  return undefined;
+}
+
+function saveSession(client, session, options = {}) {
+  if (client && typeof client._saveSession === 'function') {
+    client._saveSession(session, options);
+  }
+}
+
+function clearSession(client) {
+  if (client && typeof client._clearSession === 'function') {
+    client._clearSession();
+  }
+}
+
+function buildHeaders(options = {}, client = null) {
   const headers = {
     ...options.headers,
   };
+
+  headers['Accept-Encoding'] = 'identity';
 
   const method = (options.method || 'GET').toUpperCase();
   const hasBody = options.body !== undefined && options.body !== null;
@@ -18,12 +39,12 @@ function buildHeaders(options = {}) {
     }
   }
 
-  const apiKey = options.apikey || runtime.getApiKey();
+  const apiKey = options.apikey || options.apiKey || getSessionValue(client, 'apiKey');
   if (apiKey) {
     headers.apikey = apiKey;
   }
 
-  const token = options.token || runtime.getAccessToken();
+  const token = options.token || getSessionValue(client, 'accessToken');
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
@@ -78,31 +99,84 @@ function getBodyPayload(options) {
   return JSON.stringify(options.body);
 }
 
-async function refreshSession(baseUrl, apiKey) {
-  if (!refreshingPromise) {
-    refreshingPromise = (async () => {
-      const refreshToken = runtime.getRefreshToken();
-      if (!refreshToken) {
-        throw new Error('No refresh token available for session refresh');
-      }
+function shouldRefreshRequest(path) {
+  const normalizedPath = String(path).replace(/^https?:\/\/[^/]+\//, '').replace(/^\//, '');
 
+  return (
+    normalizedPath.startsWith('rest/v1/') ||
+    normalizedPath.startsWith('functions/v1/') ||
+    normalizedPath === 'auth/v1/user'
+  );
+}
+
+function fetchWithTimeout(url, options, timeout = DEFAULT_TIMEOUT) {
+  if (timeout <= 0) {
+    return fetch(url, options);
+  }
+
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = new Error(`Request timed out after ${timeout}ms: ${url}`);
+      error.name = 'TimeoutError';
+      reject(error);
+    }, timeout);
+  });
+
+  return Promise.race([fetch(url, options), timeoutPromise]).then(
+    (response) => {
+      clearTimeout(timeoutId);
+      return response;
+    },
+    (error) => {
+      clearTimeout(timeoutId);
+      throw error;
+    }
+  );
+}
+
+async function refreshSession(baseUrl, apiKey, client = null) {
+  if (!client) {
+    throw new Error('request(): session refresh requires a bound client');
+  }
+
+  const refreshToken = getSessionValue(client, 'refreshToken');
+  if (!refreshToken) {
+    throw new Error('No refresh token available for session refresh');
+  }
+
+  let refreshPromise = refreshingPromisesByClient.get(client);
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
       const { refresh } = require('./auth');
       const result = await refresh(refreshToken, {
         baseUrl,
         apikey: apiKey,
         _retry: true,
+        _skipSave: true,
+        client,
       });
 
-      runtime.saveSession(result);
+      if (client.refreshToken !== refreshToken) {
+        throw new Error('Session changed while refresh was in progress');
+      }
+
+      saveSession(client, result, { event: 'TOKEN_REFRESHED' });
       return result;
     })();
 
-    refreshingPromise.finally(() => {
-      refreshingPromise = null;
-    });
+    refreshingPromisesByClient.set(client, refreshPromise);
+
+    const clearRefreshPromise = () => {
+      if (refreshingPromisesByClient.get(client) === refreshPromise) {
+        refreshingPromisesByClient.delete(client);
+      }
+    };
+
+    refreshPromise.then(clearRefreshPromise, clearRefreshPromise);
   }
 
-  return refreshingPromise;
+  return refreshPromise;
 }
 
 async function executeRequest(path, options = {}) {
@@ -110,22 +184,22 @@ async function executeRequest(path, options = {}) {
     throw new Error('request(): path is required');
   }
 
-  const baseUrl = options.baseUrl || runtime.getUrl();
+  const client = options.client || null;
+  if (!client) {
+    throw new Error('request(): request must be bound to a Supabase client');
+  }
+
+  const baseUrl = options.baseUrl || (client && client.url);
   if (!baseUrl) {
-    throw new Error('request(): SUPABASE_URL is required in environment variables or options');
+    throw new Error('request(): baseUrl is required in options or client');
   }
 
   const url = path.startsWith('http') ? path : `${baseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
   const timeout = options.timeout != null ? options.timeout : DEFAULT_TIMEOUT;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-  }, timeout);
 
   const fetchOptions = {
     method: options.method || 'GET',
-    headers: buildHeaders(options),
-    signal: controller.signal,
+    headers: buildHeaders(options, client),
   };
 
   const bodyPayload = getBodyPayload(options);
@@ -135,29 +209,31 @@ async function executeRequest(path, options = {}) {
 
   let response;
   try {
-    response = await fetch(url, fetchOptions);
+    response = await fetchWithTimeout(url, fetchOptions, timeout);
   } catch (networkError) {
-    if (networkError.name === 'AbortError') {
-      throw new Error(`Request timed out after ${timeout}ms: ${url}`);
+    if (networkError.name === 'TimeoutError') {
+      throw networkError;
     }
     throw new Error(`Network error while requesting ${url}: ${networkError.message}`);
-  } finally {
-    clearTimeout(timeoutId);
   }
 
   const normalized = await normalizeResponse(response);
 
-  if (!response.ok && response.status === 401 && !options._retry) {
+  if (!response.ok && response.status === 401 && shouldRefreshRequest(path) && !options._retry) {
     try {
-      const refreshResult = await refreshSession(baseUrl, options.apikey || runtime.getApiKey());
+      const refreshResult = await refreshSession(
+        baseUrl,
+        options.apikey || options.apiKey || (client && client.apiKey),
+        client
+      );
       const retryOptions = {
         ...options,
-        token: refreshResult.access_token || options.token,
+        token: undefined,
         _retry: true,
       };
       return executeRequest(path, retryOptions);
     } catch (refreshError) {
-      runtime.clearSession();
+      clearSession(client);
     }
   }
 
@@ -176,6 +252,16 @@ async function request(path, options = {}) {
   return executeRequest(path, options);
 }
 
+function createRequest(client) {
+  return function boundRequest(path, options = {}) {
+    return executeRequest(path, {
+      ...options,
+      client,
+    });
+  };
+}
+
 module.exports = {
+  createRequest,
   request,
 };
