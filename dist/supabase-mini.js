@@ -4,74 +4,36 @@ var Supabase = (() => {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
 
-  // supabase-mini/src/runtime.js
-  var require_runtime = __commonJS({
-    "supabase-mini/src/runtime.js"(exports, module) {
-      function getVarValue(name) {
-        if (typeof zdjl !== "undefined" && typeof zdjl.getVar === "function") {
-          return zdjl.getVar(name, "global");
-        }
-        if (typeof process !== "undefined" && process.env) {
-          return process.env[name];
-        }
-        return void 0;
-      }
-      function setVarValue(name, value) {
-        if (typeof zdjl !== "undefined" && typeof zdjl.setVar === "function") {
-          return zdjl.setVar(name, value, "global");
-        }
-        if (typeof process !== "undefined" && process.env) {
-          if (value === void 0) {
-            delete process.env[name];
-          } else {
-            process.env[name] = value;
-          }
-        }
-      }
-      function getUrl() {
-        return getVarValue("SUPABASE_URL");
-      }
-      function getApiKey() {
-        return getVarValue("SUPABASE_API_KEY") || getVarValue("SUPABASE_PUBLISHABLE_KEY");
-      }
-      function getAccessToken() {
-        return getVarValue("SUPABASE_ACCESS_TOKEN") || getVarValue("SUPABASE_BEARER_TOKEN");
-      }
-      function getRefreshToken() {
-        return getVarValue("SUPABASE_REFRESH_TOKEN");
-      }
-      function saveSession(session = {}) {
-        if (!session || typeof session !== "object") {
-          return;
-        }
-        if (session.access_token) {
-          setVarValue("SUPABASE_ACCESS_TOKEN", session.access_token);
-        }
-        if (session.refresh_token) {
-          setVarValue("SUPABASE_REFRESH_TOKEN", session.refresh_token);
-        }
-      }
-      function clearSession() {
-        setVarValue("SUPABASE_ACCESS_TOKEN", void 0);
-        setVarValue("SUPABASE_REFRESH_TOKEN", void 0);
-      }
-      module.exports = {
-        getUrl,
-        getApiKey,
-        getAccessToken,
-        getRefreshToken,
-        saveSession,
-        clearSession
-      };
-    }
-  });
-
   // supabase-mini/src/auth.js
   var require_auth = __commonJS({
     "supabase-mini/src/auth.js"(exports, module) {
       var { request } = require_request();
-      var runtime = require_runtime();
+      function withClient(options, client) {
+        if (!client) {
+          return options;
+        }
+        return {
+          ...options,
+          client
+        };
+      }
+      function requireClient(options = {}, methodName = "auth") {
+        if (!options.client) {
+          throw new Error(`${methodName}(): must be called from a Supabase client`);
+        }
+      }
+      function saveSessionToClient(client, session2 = {}, options = {}) {
+        if (client && typeof client._saveSession === "function") {
+          client._saveSession(session2, options);
+        }
+      }
+      function clearClientSession(client, options = {}) {
+        if (client && typeof client._clearSession === "function") {
+          client._clearSession(options);
+        }
+      }
       async function signUp(credentials = {}, options = {}) {
+        requireClient(options, "signUp");
         const { email, password, data } = credentials;
         if (!email || !password) {
           throw new Error("signUp(): email and password are required");
@@ -81,10 +43,13 @@ var Supabase = (() => {
           body: { email, password, data },
           ...options
         });
-        runtime.saveSession(result);
+        if (!options._skipSave) {
+          saveSessionToClient(options.client, result, { event: "SIGNED_IN" });
+        }
         return result;
       }
       async function signIn(credentials = {}, options = {}) {
+        requireClient(options, "signIn");
         const { email, password } = credentials;
         if (!email || !password) {
           throw new Error("signIn(): email and password are required");
@@ -97,10 +62,13 @@ var Supabase = (() => {
           },
           ...options
         });
-        runtime.saveSession(result);
+        if (!options._skipSave) {
+          saveSessionToClient(options.client, result, { event: "SIGNED_IN" });
+        }
         return result;
       }
       async function refresh(refreshToken, options = {}) {
+        requireClient(options, "refresh");
         if (!refreshToken) {
           throw new Error("refresh(): refreshToken is required");
         }
@@ -111,39 +79,103 @@ var Supabase = (() => {
           },
           ...options
         });
-        runtime.saveSession(result);
+        if (!options._skipSave) {
+          saveSessionToClient(options.client, result, { event: "TOKEN_REFRESHED" });
+        }
         return result;
       }
       async function getUser(options = {}) {
+        requireClient(options, "getUser");
         return request("auth/v1/user", {
           method: "GET",
           ...options
         });
       }
       async function logout(options = {}) {
+        requireClient(options, "logout");
         const { refreshToken } = options;
         const result = await request("auth/v1/logout", {
           method: "POST",
           body: refreshToken ? { refresh_token: refreshToken } : void 0,
           ...options
         });
-        runtime.clearSession();
+        clearClientSession(options.client, { event: "SIGNED_OUT" });
         return result;
       }
-      function saveSession(session = {}) {
-        runtime.saveSession(session);
+      function saveSession(session2 = {}, options = {}) {
+        requireClient(options, "saveSession");
+        saveSessionToClient(options.client, session2, { event: options.event || "SIGNED_IN" });
       }
-      function clearSession() {
-        runtime.clearSession();
+      function clearSession(options = {}) {
+        requireClient(options, "clearSession");
+        clearClientSession(options.client, { event: "SIGNED_OUT" });
+      }
+      function session(options = {}) {
+        requireClient(options, "session");
+        const client = options.client;
+        if (client && typeof client.getSession === "function") {
+          return client.getSession();
+        }
+        return null;
+      }
+      function onAuthStateChange(callback, options = {}) {
+        requireClient(options, "onAuthStateChange");
+        if (options.client && typeof options.client._onAuthStateChange === "function") {
+          return options.client._onAuthStateChange(callback);
+        }
+        throw new Error("onAuthStateChange(): client does not support auth state changes");
+      }
+      function createAuth(client) {
+        return {
+          signUp(credentials = {}, options = {}) {
+            return signUp(credentials, withClient(options, client));
+          },
+          signIn(credentials = {}, options = {}) {
+            return signIn(credentials, withClient(options, client));
+          },
+          refresh(refreshToken, options = {}) {
+            return refresh(refreshToken, withClient(options, client));
+          },
+          getUser(options = {}) {
+            return getUser(withClient(options, client));
+          },
+          logout(options = {}) {
+            return logout(withClient(options, client));
+          },
+          saveSession(session2 = {}, options = {}) {
+            return saveSession(session2, withClient(options, client));
+          },
+          clearSession() {
+            return clearSession({ client });
+          },
+          session() {
+            return session({ client });
+          },
+          getSession() {
+            return session({ client });
+          },
+          getAccessToken() {
+            return client ? client.accessToken : void 0;
+          },
+          getRefreshToken() {
+            return client ? client.refreshToken : void 0;
+          },
+          onAuthStateChange(callback) {
+            return onAuthStateChange(callback, { client });
+          }
+        };
       }
       module.exports = {
+        createAuth,
         signUp,
         signIn,
         refresh,
         getUser,
         logout,
         saveSession,
-        clearSession
+        clearSession,
+        session,
+        onAuthStateChange
       };
     }
   });
@@ -152,9 +184,24 @@ var Supabase = (() => {
   var require_request = __commonJS({
     "supabase-mini/src/request.js"(exports, module) {
       var DEFAULT_TIMEOUT = 3e4;
-      var runtime = require_runtime();
-      var refreshingPromise = null;
-      function buildHeaders(options = {}) {
+      var refreshingPromisesByClient = /* @__PURE__ */ new WeakMap();
+      function getSessionValue(client, key) {
+        if (client && client[key]) {
+          return client[key];
+        }
+        return void 0;
+      }
+      function saveSession(client, session, options = {}) {
+        if (client && typeof client._saveSession === "function") {
+          client._saveSession(session, options);
+        }
+      }
+      function clearSession(client) {
+        if (client && typeof client._clearSession === "function") {
+          client._clearSession();
+        }
+      }
+      function buildHeaders(options = {}, client = null) {
         const headers = {
           ...options.headers
         };
@@ -167,11 +214,11 @@ var Supabase = (() => {
             headers["Content-Type"] = "application/json";
           }
         }
-        const apiKey = options.apikey || runtime.getApiKey();
+        const apiKey = options.apikey || options.apiKey || getSessionValue(client, "apiKey");
         if (apiKey) {
           headers.apikey = apiKey;
         }
-        const token = options.token || runtime.getAccessToken();
+        const token = options.token || getSessionValue(client, "accessToken");
         if (token) {
           headers.Authorization = `Bearer ${token}`;
         }
@@ -217,46 +264,85 @@ var Supabase = (() => {
         }
         return JSON.stringify(options.body);
       }
-      async function refreshSession(baseUrl, apiKey) {
-        if (!refreshingPromise) {
-          refreshingPromise = (async () => {
-            const refreshToken = runtime.getRefreshToken();
-            if (!refreshToken) {
-              throw new Error("No refresh token available for session refresh");
-            }
+      function shouldRefreshRequest(path) {
+        const normalizedPath = String(path).replace(/^https?:\/\/[^/]+\//, "").replace(/^\//, "");
+        return normalizedPath.startsWith("rest/v1/") || normalizedPath.startsWith("functions/v1/") || normalizedPath === "auth/v1/user";
+      }
+      function fetchWithTimeout(url, options, timeout = DEFAULT_TIMEOUT) {
+        if (timeout <= 0) {
+          return fetch(url, options);
+        }
+        let timeoutId;
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => {
+            const error = new Error(`Request timed out after ${timeout}ms: ${url}`);
+            error.name = "TimeoutError";
+            reject(error);
+          }, timeout);
+        });
+        return Promise.race([fetch(url, options), timeoutPromise]).then(
+          (response) => {
+            clearTimeout(timeoutId);
+            return response;
+          },
+          (error) => {
+            clearTimeout(timeoutId);
+            throw error;
+          }
+        );
+      }
+      async function refreshSession(baseUrl, apiKey, client = null) {
+        if (!client) {
+          throw new Error("request(): session refresh requires a bound client");
+        }
+        const refreshToken = getSessionValue(client, "refreshToken");
+        if (!refreshToken) {
+          throw new Error("No refresh token available for session refresh");
+        }
+        let refreshPromise = refreshingPromisesByClient.get(client);
+        if (!refreshPromise) {
+          refreshPromise = (async () => {
             const { refresh } = require_auth();
             const result = await refresh(refreshToken, {
               baseUrl,
               apikey: apiKey,
-              _retry: true
+              _retry: true,
+              _skipSave: true,
+              client
             });
-            runtime.saveSession(result);
+            if (client.refreshToken !== refreshToken) {
+              throw new Error("Session changed while refresh was in progress");
+            }
+            saveSession(client, result, { event: "TOKEN_REFRESHED" });
             return result;
           })();
-          refreshingPromise.finally(() => {
-            refreshingPromise = null;
-          });
+          refreshingPromisesByClient.set(client, refreshPromise);
+          const clearRefreshPromise = () => {
+            if (refreshingPromisesByClient.get(client) === refreshPromise) {
+              refreshingPromisesByClient.delete(client);
+            }
+          };
+          refreshPromise.then(clearRefreshPromise, clearRefreshPromise);
         }
-        return refreshingPromise;
+        return refreshPromise;
       }
       async function executeRequest(path, options = {}) {
         if (!path) {
           throw new Error("request(): path is required");
         }
-        const baseUrl = options.baseUrl || runtime.getUrl();
+        const client = options.client || null;
+        if (!client) {
+          throw new Error("request(): request must be bound to a Supabase client");
+        }
+        const baseUrl = options.baseUrl || client && client.url;
         if (!baseUrl) {
-          throw new Error("request(): SUPABASE_URL is required in environment variables or options");
+          throw new Error("request(): baseUrl is required in options or client");
         }
         const url = path.startsWith("http") ? path : `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
         const timeout = options.timeout != null ? options.timeout : DEFAULT_TIMEOUT;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => {
-          controller.abort();
-        }, timeout);
         const fetchOptions = {
           method: options.method || "GET",
-          headers: buildHeaders(options),
-          signal: controller.signal
+          headers: buildHeaders(options, client)
         };
         const bodyPayload = getBodyPayload(options);
         if (bodyPayload !== void 0) {
@@ -264,27 +350,29 @@ var Supabase = (() => {
         }
         let response;
         try {
-          response = await fetch(url, fetchOptions);
+          response = await fetchWithTimeout(url, fetchOptions, timeout);
         } catch (networkError) {
-          if (networkError.name === "AbortError") {
-            throw new Error(`Request timed out after ${timeout}ms: ${url}`);
+          if (networkError.name === "TimeoutError") {
+            throw networkError;
           }
           throw new Error(`Network error while requesting ${url}: ${networkError.message}`);
-        } finally {
-          clearTimeout(timeoutId);
         }
         const normalized = await normalizeResponse(response);
-        if (!response.ok && response.status === 401 && !options._retry) {
+        if (!response.ok && response.status === 401 && shouldRefreshRequest(path) && !options._retry) {
           try {
-            const refreshResult = await refreshSession(baseUrl, options.apikey || runtime.getApiKey());
+            const refreshResult = await refreshSession(
+              baseUrl,
+              options.apikey || options.apiKey || client && client.apiKey,
+              client
+            );
             const retryOptions = {
               ...options,
-              token: refreshResult.access_token || options.token,
+              token: void 0,
               _retry: true
             };
             return executeRequest(path, retryOptions);
           } catch (refreshError) {
-            runtime.clearSession();
+            clearSession(client);
           }
         }
         if (!response.ok) {
@@ -299,7 +387,16 @@ var Supabase = (() => {
       async function request(path, options = {}) {
         return executeRequest(path, options);
       }
+      function createRequest(client) {
+        return function boundRequest(path, options = {}) {
+          return executeRequest(path, {
+            ...options,
+            client
+          });
+        };
+      }
       module.exports = {
+        createRequest,
         request
       };
     }
@@ -309,6 +406,20 @@ var Supabase = (() => {
   var require_db = __commonJS({
     "supabase-mini/src/db.js"(exports, module) {
       var { request } = require_request();
+      function withClient(options, client) {
+        if (!client) {
+          return options;
+        }
+        return {
+          ...options,
+          client
+        };
+      }
+      function requireClient(options = {}, methodName = "db") {
+        if (!options.client) {
+          throw new Error(`${methodName}(): must be called from a Supabase client`);
+        }
+      }
       function encodeQueryValue(value) {
         return encodeURIComponent(String(value));
       }
@@ -408,6 +519,7 @@ var Supabase = (() => {
         return query ? `${basePath}?${query}` : basePath;
       }
       async function select(table, options = {}) {
+        requireClient(options, "select");
         if (!table) {
           throw new Error("select(): table is required");
         }
@@ -419,6 +531,7 @@ var Supabase = (() => {
         });
       }
       async function single(table, options = {}) {
+        requireClient(options, "single");
         if (!table) {
           throw new Error("single(): table is required");
         }
@@ -426,14 +539,15 @@ var Supabase = (() => {
         const path = buildPath(table, options);
         return request(path, {
           method: "GET",
+          ...options,
           headers: {
-            Accept: "application/vnd.pgrst.object+json",
-            ...options.headers
-          },
-          ...options
+            ...options.headers,
+            Accept: "application/vnd.pgrst.object+json"
+          }
         });
       }
       async function maybeSingle(table, options = {}) {
+        requireClient(options, "maybeSingle");
         if (!table) {
           throw new Error("maybeSingle(): table is required");
         }
@@ -442,11 +556,11 @@ var Supabase = (() => {
         try {
           return await request(path, {
             method: "GET",
+            ...options,
             headers: {
-              Accept: "application/vnd.pgrst.object+json",
-              ...options.headers
-            },
-            ...options
+              ...options.headers,
+              Accept: "application/vnd.pgrst.object+json"
+            }
           });
         } catch (err) {
           if (err && err.status === 406) {
@@ -456,6 +570,7 @@ var Supabase = (() => {
         }
       }
       async function insert(table, rows, options = {}) {
+        requireClient(options, "insert");
         if (!table) {
           throw new Error("insert(): table is required");
         }
@@ -472,6 +587,7 @@ var Supabase = (() => {
         });
       }
       async function update(table, changes, options = {}) {
+        requireClient(options, "update");
         if (!table) {
           throw new Error("update(): table is required");
         }
@@ -488,6 +604,7 @@ var Supabase = (() => {
         });
       }
       async function remove(table, options = {}) {
+        requireClient(options, "delete");
         if (!table) {
           throw new Error("delete(): table is required");
         }
@@ -500,6 +617,7 @@ var Supabase = (() => {
         });
       }
       async function rpc(fn, params = {}, options = {}) {
+        requireClient(options, "rpc");
         if (!fn) {
           throw new Error("rpc(): function name is required");
         }
@@ -510,6 +628,31 @@ var Supabase = (() => {
         });
       }
       module.exports = {
+        createDb(client) {
+          return {
+            select(table, options = {}) {
+              return select(table, withClient(options, client));
+            },
+            single(table, options = {}) {
+              return single(table, withClient(options, client));
+            },
+            maybeSingle(table, options = {}) {
+              return maybeSingle(table, withClient(options, client));
+            },
+            insert(table, rows, options = {}) {
+              return insert(table, rows, withClient(options, client));
+            },
+            update(table, changes, options = {}) {
+              return update(table, changes, withClient(options, client));
+            },
+            delete(table, options = {}) {
+              return remove(table, withClient(options, client));
+            },
+            rpc(fn, params = {}, options = {}) {
+              return rpc(fn, params, withClient(options, client));
+            }
+          };
+        },
         select,
         single,
         maybeSingle,
@@ -595,7 +738,22 @@ var Supabase = (() => {
   var require_functions = __commonJS({
     "supabase-mini/src/functions.js"(exports, module) {
       var { request } = require_request();
+      function withClient(options, client) {
+        if (!client) {
+          return options;
+        }
+        return {
+          ...options,
+          client
+        };
+      }
+      function requireClient(options = {}, methodName = "functions") {
+        if (!options.client) {
+          throw new Error(`${methodName}(): must be called from a Supabase client`);
+        }
+      }
       async function invoke(functionName, data = {}, options = {}) {
+        requireClient(options, "invoke");
         if (!functionName) {
           throw new Error("invoke(): functionName is required");
         }
@@ -606,6 +764,13 @@ var Supabase = (() => {
         });
       }
       module.exports = {
+        createFunctions(client) {
+          return {
+            invoke(functionName, data = {}, options = {}) {
+              return invoke(functionName, data, withClient(options, client));
+            }
+          };
+        },
         invoke
       };
     }
@@ -614,22 +779,219 @@ var Supabase = (() => {
   // supabase-mini/src/index.js
   var require_src = __commonJS({
     "supabase-mini/src/index.js"(exports, module) {
-      var { request } = require_request();
-      var auth = require_auth();
-      var db = require_db();
+      var { createRequest } = require_request();
+      var authModule = require_auth();
+      var dbModule = require_db();
       var filters = require_filters();
-      var functions = require_functions();
-      var runtime = require_runtime();
+      var functionsModule = require_functions();
+      function makeStorageKey(url) {
+        return `supabase-mini:${url}:currentSession`;
+      }
+      function getStorageAdapter() {
+        if (typeof zdjl !== "undefined") {
+          return {
+            getItem(key) {
+              if (typeof zdjl.getStorage === "function") {
+                return zdjl.getStorage(key);
+              }
+              return null;
+            },
+            setItem(key, value) {
+              if (typeof zdjl.setStorage === "function") {
+                zdjl.setStorage(key, value);
+              }
+            },
+            removeItem(key) {
+              if (typeof zdjl.removeStorage === "function") {
+                zdjl.removeStorage(key);
+              }
+            }
+          };
+        }
+        if (typeof localStorage !== "undefined") {
+          return {
+            getItem(key) {
+              return localStorage.getItem(key);
+            },
+            setItem(key, value) {
+              localStorage.setItem(key, value);
+            },
+            removeItem(key) {
+              localStorage.removeItem(key);
+            }
+          };
+        }
+        return null;
+      }
+      function normalizeStoredSession(value) {
+        if (!value) {
+          return null;
+        }
+        if (typeof value === "object") {
+          return value;
+        }
+        if (typeof value === "string") {
+          try {
+            return JSON.parse(value);
+          } catch (error) {
+            return null;
+          }
+        }
+        return null;
+      }
+      function getSessionEvent(session = {}, fallback = "SIGNED_IN") {
+        if (session && session._authEvent) {
+          return session._authEvent;
+        }
+        if (session && session._isRefresh) {
+          return "TOKEN_REFRESHED";
+        }
+        return fallback;
+      }
+      var SupabaseClient = class {
+        constructor(url, apiKey, options = {}) {
+          this.url = url;
+          this.apiKey = apiKey;
+          this.accessToken = null;
+          this.refreshToken = null;
+          this._session = null;
+          this._authStateChangeCallbacks = [];
+          this.persistSession = options.persistSession !== false;
+          this.storageKey = options.storageKey || makeStorageKey(url);
+          this.storage = options.storage || getStorageAdapter();
+          this.request = createRequest(this);
+          this.auth = authModule.createAuth(this);
+          this.db = dbModule.createDb(this);
+          this.functions = functionsModule.createFunctions(this);
+          this.filters = filters;
+          this._loadSession();
+        }
+        _loadSession() {
+          if (!this.persistSession || !this.storage || typeof this.storage.getItem !== "function") {
+            return;
+          }
+          try {
+            const session = normalizeStoredSession(this.storage.getItem(this.storageKey));
+            if (session) {
+              this._saveSession(session, {
+                persist: false,
+                notify: false,
+                event: "INITIAL_SESSION"
+              });
+            }
+          } catch (error) {
+          }
+        }
+        _persistSession() {
+          if (!this.persistSession || !this.storage || typeof this.storage.setItem !== "function") {
+            return;
+          }
+          const session = this.getSession();
+          if (!session) {
+            this._removePersistedSession();
+            return;
+          }
+          try {
+            this.storage.setItem(this.storageKey, JSON.stringify(session));
+          } catch (error) {
+          }
+        }
+        _removePersistedSession() {
+          if (!this.persistSession || !this.storage || typeof this.storage.removeItem !== "function") {
+            return;
+          }
+          try {
+            this.storage.removeItem(this.storageKey);
+          } catch (error) {
+          }
+        }
+        _notifyAuthStateChange(event, session) {
+          this._authStateChangeCallbacks.slice().forEach((callback) => {
+            try {
+              callback(event, session);
+            } catch (error) {
+              setTimeout(() => {
+                throw error;
+              }, 0);
+            }
+          });
+        }
+        _onAuthStateChange(callback) {
+          if (typeof callback !== "function") {
+            throw new Error("onAuthStateChange(): callback is required");
+          }
+          this._authStateChangeCallbacks.push(callback);
+          Promise.resolve().then(() => {
+            callback("INITIAL_SESSION", this.getSession());
+          }).catch((error) => {
+            setTimeout(() => {
+              throw error;
+            }, 0);
+          });
+          return {
+            unsubscribe: () => {
+              this._authStateChangeCallbacks = this._authStateChangeCallbacks.filter((item) => item !== callback);
+            }
+          };
+        }
+        _saveSession(session = {}, options = {}) {
+          if (!session || typeof session !== "object") {
+            return;
+          }
+          this._session = {
+            ...this._session || {},
+            ...session
+          };
+          delete this._session._authEvent;
+          delete this._session._isRefresh;
+          if (session.access_token) {
+            this.accessToken = session.access_token;
+          }
+          if (session.refresh_token) {
+            this.refreshToken = session.refresh_token;
+          }
+          if (options.persist !== false) {
+            this._persistSession();
+          }
+          if (options.notify !== false) {
+            this._notifyAuthStateChange(getSessionEvent(session, options.event || "SIGNED_IN"), this.getSession());
+          }
+        }
+        _clearSession(options = {}) {
+          this.accessToken = null;
+          this.refreshToken = null;
+          this._session = null;
+          this._removePersistedSession();
+          if (options.notify !== false) {
+            this._notifyAuthStateChange(options.event || "SIGNED_OUT", null);
+          }
+        }
+        getSession() {
+          if (!this._session && !this.accessToken && !this.refreshToken) {
+            return null;
+          }
+          return {
+            ...this._session || {},
+            access_token: this.accessToken,
+            refresh_token: this.refreshToken
+          };
+        }
+      };
+      function createClient(url, apiKey, options = {}) {
+        if (!url) {
+          throw new Error("createClient(): url is required");
+        }
+        if (!apiKey) {
+          throw new Error("createClient(): apiKey is required");
+        }
+        return new SupabaseClient(url, apiKey, options);
+      }
       module.exports = {
-        request,
-        auth,
-        db,
+        SupabaseClient,
         filters,
-        functions,
-        runtime
+        createClient
       };
     }
   });
   return require_src();
 })();
-zdjl.setVar("Supabase", Supabase, "global");
