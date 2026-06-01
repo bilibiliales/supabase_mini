@@ -210,6 +210,21 @@ function createMockFetch() {
       });
     }
 
+    if (pathname.startsWith('auth/v1/user') && method === 'PUT') {
+      if (!getAuth(headers)) {
+        return makeResponse(401, { message: 'missing auth' });
+      }
+
+      return makeResponse(200, {
+        id: project.id,
+        email: body.email || `${project.name}@example.com`,
+        phone: body.phone || null,
+        user_metadata: body.data || {},
+        current_password_received: body.current_password || null,
+        project: project.name,
+      });
+    }
+
     if (pathname.startsWith('auth/v1/user')) {
       if (!getAuth(headers)) {
         return makeResponse(401, { message: 'missing auth' });
@@ -222,7 +237,9 @@ function createMockFetch() {
     }
 
     if (pathname.startsWith('auth/v1/logout')) {
-      return makeResponse(204, null);
+      return makeResponse(200, {
+        scope: new URL(url).searchParams.get('scope') || 'global',
+      });
     }
 
     if (pathname.startsWith('functions/v1/')) {
@@ -355,7 +372,7 @@ test('filters helpers build REST filter objects', async () => {
   assertDeepEqual(Supabase.filters.limit(2), { limit: 2 }, 'limit filter should match');
 });
 
-test('auth covers signUp, signIn, getUser, refresh, session and logout', async () => {
+test('auth covers signUp, signIn, getUser, refresh, session and signOut', async () => {
   const mockFetch = createMockFetch();
   const Supabase = loadSupabase(mockFetch);
   const { supabaseClient } = createClients(Supabase);
@@ -382,9 +399,9 @@ test('auth covers signUp, signIn, getUser, refresh, session and logout', async (
   assertEqual(refreshed.access_token, 'project-a-refreshed-1-access', 'refresh should return new session');
   assertEqual(supabaseClient.getSession().access_token, 'project-a-refreshed-1-access', 'refresh should save new session');
 
-  await supabaseClient.auth.logout();
-  assertEqual(supabaseClient.auth.session(), null, 'logout should clear session');
-  assertEqual(supabaseClient.auth.getAccessToken(), null, 'logout should clear access token');
+  await supabaseClient.auth.signOut();
+  assertEqual(supabaseClient.auth.session(), null, 'signOut should clear session');
+  assertEqual(supabaseClient.auth.getAccessToken(), null, 'signOut should clear access token');
 });
 
 test('session persists through zdjl storage and reloads into a new client', async () => {
@@ -486,7 +503,7 @@ test('auth state change emits signed in, token refreshed and signed out events',
     password: 'password-123',
   });
   await supabaseClient.auth.refresh(supabaseClient.auth.getRefreshToken());
-  await supabaseClient.auth.logout();
+  await supabaseClient.auth.signOut();
 
   assertDeepEqual(
     events,
@@ -505,6 +522,92 @@ test('auth state change emits signed in, token refreshed and signed out events',
     password: 'password-123',
   });
   assertEqual(events.length, 4, 'unsubscribe should stop future events');
+});
+
+test('auth.signOut supports global, local and others scopes', async () => {
+  const mockFetch = createMockFetch();
+  const Supabase = loadSupabase(mockFetch);
+  const { supabaseClient } = createClients(Supabase);
+  const events = [];
+
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    events.push({
+      event,
+      accessToken: session && session.access_token,
+    });
+  });
+  await flushMicrotasks();
+
+  supabaseClient.auth.saveSession({
+    access_token: 'token-local',
+    refresh_token: 'refresh-local',
+  });
+  const localResult = await supabaseClient.auth.signOut({ scope: 'local' });
+  assertEqual(localResult.scope, 'local', 'signOut should pass local scope to logout endpoint');
+  assertEqual(supabaseClient.auth.session(), null, 'local signOut should clear current session');
+
+  supabaseClient.auth.saveSession({
+    access_token: 'token-others',
+    refresh_token: 'refresh-others',
+  });
+  const othersResult = await supabaseClient.auth.signOut({ scope: 'others' });
+  assertEqual(othersResult.scope, 'others', 'signOut should pass others scope to logout endpoint');
+  assertEqual(supabaseClient.auth.getAccessToken(), 'token-others', 'others signOut should keep current session');
+
+  await expectReject(
+    () => supabaseClient.auth.signOut({ scope: 'invalid' }),
+    'signOut(): scope must be one of global, local, or others'
+  );
+
+  const signOutCalls = mockFetch.state.calls.filter((call) => call.url.includes('auth/v1/logout'));
+  assert(signOutCalls.some((call) => call.url.includes('scope=local')), 'logout endpoint should include local scope');
+  assert(signOutCalls.some((call) => call.url.includes('scope=others')), 'logout endpoint should include others scope');
+  assert(
+    events.filter((item) => item.event === 'SIGNED_OUT').length === 1,
+    'only local/global signOut should emit SIGNED_OUT'
+  );
+});
+
+test('auth.updateUser updates user attributes and emits USER_UPDATED', async () => {
+  const mockFetch = createMockFetch();
+  const Supabase = loadSupabase(mockFetch);
+  const { supabaseClient } = createClients(Supabase);
+  const events = [];
+
+  supabaseClient.auth.saveSession({
+    access_token: 'project-a-token',
+    refresh_token: 'project-a-refresh',
+  });
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    events.push({
+      event,
+      accessToken: session && session.access_token,
+    });
+  });
+  await flushMicrotasks();
+
+  const updated = await supabaseClient.auth.updateUser(
+    {
+      password: 'new_password',
+      currentPassword: 'old_password',
+      data: { display_name: 'Mini User' },
+    },
+    {
+      emailRedirectTo: 'https://example.com/after-email-change',
+    }
+  );
+
+  const updateCall = mockFetch.state.calls.find((call) => call.method === 'PUT' && call.url.includes('auth/v1/user'));
+  assert(updateCall, 'updateUser should send PUT /auth/v1/user');
+  assert(updateCall.url.includes('redirect_to=https%3A%2F%2Fexample.com%2Fafter-email-change'), 'updateUser should include email redirect query');
+  assertEqual(updateCall.body.password, 'new_password', 'updateUser should send password');
+  assertEqual(updateCall.body.current_password, 'old_password', 'updateUser should map currentPassword to current_password');
+  assertEqual(updateCall.body.currentPassword, undefined, 'updateUser should not send camelCase currentPassword');
+  assertEqual(updated.current_password_received, 'old_password', 'mock should receive current_password');
+  assert(
+    events.some((item) => item.event === 'USER_UPDATED' && item.accessToken === 'project-a-token'),
+    'updateUser should emit USER_UPDATED with current session'
+  );
 });
 
 test('saveSession can emit an explicit auth event', async () => {
@@ -758,7 +861,7 @@ async function runLiveSmokeTests() {
 
   await supabaseClient.auth.signIn({ email, password });
   await supabaseClient.auth.getUser();
-  await supabaseClient.auth.logout();
+  await supabaseClient.auth.signOut();
   console.log('[pass] live auth smoke tests passed');
 }
 

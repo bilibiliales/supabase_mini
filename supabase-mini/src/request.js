@@ -1,4 +1,3 @@
-const DEFAULT_TIMEOUT = 30000;
 const refreshingPromisesByClient = new WeakMap();
 
 function getSessionValue(client, key) {
@@ -105,33 +104,8 @@ function shouldRefreshRequest(path) {
   return (
     normalizedPath.startsWith('rest/v1/') ||
     normalizedPath.startsWith('functions/v1/') ||
-    normalizedPath === 'auth/v1/user'
-  );
-}
-
-function fetchWithTimeout(url, options, timeout = DEFAULT_TIMEOUT) {
-  if (timeout <= 0) {
-    return fetch(url, options);
-  }
-
-  let timeoutId;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
-      const error = new Error(`Request timed out after ${timeout}ms: ${url}`);
-      error.name = 'TimeoutError';
-      reject(error);
-    }, timeout);
-  });
-
-  return Promise.race([fetch(url, options), timeoutPromise]).then(
-    (response) => {
-      clearTimeout(timeoutId);
-      return response;
-    },
-    (error) => {
-      clearTimeout(timeoutId);
-      throw error;
-    }
+    normalizedPath === 'auth/v1/user' ||
+    normalizedPath.startsWith('auth/v1/user?')
   );
 }
 
@@ -195,7 +169,6 @@ async function executeRequest(path, options = {}) {
   }
 
   const url = path.startsWith('http') ? path : `${baseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
-  const timeout = options.timeout != null ? options.timeout : DEFAULT_TIMEOUT;
 
   const fetchOptions = {
     method: options.method || 'GET',
@@ -209,11 +182,8 @@ async function executeRequest(path, options = {}) {
 
   let response;
   try {
-    response = await fetchWithTimeout(url, fetchOptions, timeout);
+    response = await fetch(url, fetchOptions);
   } catch (networkError) {
-    if (networkError.name === 'TimeoutError') {
-      throw networkError;
-    }
     throw new Error(`Network error while requesting ${url}: ${networkError.message}`);
   }
 

@@ -29,6 +29,40 @@ function clearClientSession(client, options = {}) {
   }
 }
 
+function notifyClient(client, event) {
+  if (client && typeof client._notifyAuthStateChange === 'function') {
+    client._notifyAuthStateChange(event, client.getSession ? client.getSession() : null);
+  }
+}
+
+function normalizeUserAttributes(attributes = {}) {
+  const body = {};
+
+  Object.entries(attributes).forEach(([key, value]) => {
+    if (value === undefined) {
+      return;
+    }
+
+    if (key === 'currentPassword') {
+      body.current_password = value;
+      return;
+    }
+
+    body[key] = value;
+  });
+
+  return body;
+}
+
+function normalizeSignOutScope(scope = 'global') {
+  const allowed = ['global', 'local', 'others'];
+  if (!allowed.includes(scope)) {
+    throw new Error('signOut(): scope must be one of global, local, or others');
+  }
+
+  return scope;
+}
+
 async function signUp(credentials = {}, options = {}) {
   requireClient(options, 'signUp');
 
@@ -102,18 +136,45 @@ async function getUser(options = {}) {
   });
 }
 
-async function logout(options = {}) {
-  requireClient(options, 'logout');
+async function updateUser(attributes = {}, options = {}) {
+  requireClient(options, 'updateUser');
 
+  if (!attributes || typeof attributes !== 'object' || Array.isArray(attributes)) {
+    throw new Error('updateUser(): attributes must be an object');
+  }
+
+  const body = normalizeUserAttributes(attributes);
+  if (Object.keys(body).length === 0) {
+    throw new Error('updateUser(): at least one attribute is required');
+  }
+
+  const query = options.emailRedirectTo ? `?redirect_to=${encodeURIComponent(options.emailRedirectTo)}` : '';
+  const result = await request(`auth/v1/user${query}`, {
+    method: 'PUT',
+    body,
+    ...options,
+  });
+
+  notifyClient(options.client, 'USER_UPDATED');
+  return result;
+}
+
+async function signOut(options = {}) {
+  requireClient(options, 'signOut');
+
+  const scope = normalizeSignOutScope(options.scope || 'global');
   const { refreshToken } = options;
 
-  const result = await request('auth/v1/logout', {
+  const result = await request(`auth/v1/logout?scope=${encodeURIComponent(scope)}`, {
     method: 'POST',
     body: refreshToken ? { refresh_token: refreshToken } : undefined,
     ...options,
   });
 
-  clearClientSession(options.client, { event: 'SIGNED_OUT' });
+  if (scope !== 'others') {
+    clearClientSession(options.client, { event: 'SIGNED_OUT' });
+  }
+
   return result;
 }
 
@@ -164,8 +225,11 @@ function createAuth(client) {
     getUser(options = {}) {
       return getUser(withClient(options, client));
     },
-    logout(options = {}) {
-      return logout(withClient(options, client));
+    updateUser(attributes = {}, options = {}) {
+      return updateUser(attributes, withClient(options, client));
+    },
+    signOut(options = {}) {
+      return signOut(withClient(options, client));
     },
     saveSession(session = {}, options = {}) {
       return saveSession(session, withClient(options, client));
@@ -197,7 +261,8 @@ module.exports = {
   signIn,
   refresh,
   getUser,
-  logout,
+  updateUser,
+  signOut,
   saveSession,
   clearSession,
   session,

@@ -32,6 +32,32 @@ var Supabase = (() => {
           client._clearSession(options);
         }
       }
+      function notifyClient(client, event) {
+        if (client && typeof client._notifyAuthStateChange === "function") {
+          client._notifyAuthStateChange(event, client.getSession ? client.getSession() : null);
+        }
+      }
+      function normalizeUserAttributes(attributes = {}) {
+        const body = {};
+        Object.entries(attributes).forEach(([key, value]) => {
+          if (value === void 0) {
+            return;
+          }
+          if (key === "currentPassword") {
+            body.current_password = value;
+            return;
+          }
+          body[key] = value;
+        });
+        return body;
+      }
+      function normalizeSignOutScope(scope = "global") {
+        const allowed = ["global", "local", "others"];
+        if (!allowed.includes(scope)) {
+          throw new Error("signOut(): scope must be one of global, local, or others");
+        }
+        return scope;
+      }
       async function signUp(credentials = {}, options = {}) {
         requireClient(options, "signUp");
         const { email, password, data } = credentials;
@@ -91,15 +117,36 @@ var Supabase = (() => {
           ...options
         });
       }
-      async function logout(options = {}) {
-        requireClient(options, "logout");
+      async function updateUser(attributes = {}, options = {}) {
+        requireClient(options, "updateUser");
+        if (!attributes || typeof attributes !== "object" || Array.isArray(attributes)) {
+          throw new Error("updateUser(): attributes must be an object");
+        }
+        const body = normalizeUserAttributes(attributes);
+        if (Object.keys(body).length === 0) {
+          throw new Error("updateUser(): at least one attribute is required");
+        }
+        const query = options.emailRedirectTo ? `?redirect_to=${encodeURIComponent(options.emailRedirectTo)}` : "";
+        const result = await request(`auth/v1/user${query}`, {
+          method: "PUT",
+          body,
+          ...options
+        });
+        notifyClient(options.client, "USER_UPDATED");
+        return result;
+      }
+      async function signOut(options = {}) {
+        requireClient(options, "signOut");
+        const scope = normalizeSignOutScope(options.scope || "global");
         const { refreshToken } = options;
-        const result = await request("auth/v1/logout", {
+        const result = await request(`auth/v1/logout?scope=${encodeURIComponent(scope)}`, {
           method: "POST",
           body: refreshToken ? { refresh_token: refreshToken } : void 0,
           ...options
         });
-        clearClientSession(options.client, { event: "SIGNED_OUT" });
+        if (scope !== "others") {
+          clearClientSession(options.client, { event: "SIGNED_OUT" });
+        }
         return result;
       }
       function saveSession(session2 = {}, options = {}) {
@@ -139,8 +186,11 @@ var Supabase = (() => {
           getUser(options = {}) {
             return getUser(withClient(options, client));
           },
-          logout(options = {}) {
-            return logout(withClient(options, client));
+          updateUser(attributes = {}, options = {}) {
+            return updateUser(attributes, withClient(options, client));
+          },
+          signOut(options = {}) {
+            return signOut(withClient(options, client));
           },
           saveSession(session2 = {}, options = {}) {
             return saveSession(session2, withClient(options, client));
@@ -171,7 +221,8 @@ var Supabase = (() => {
         signIn,
         refresh,
         getUser,
-        logout,
+        updateUser,
+        signOut,
         saveSession,
         clearSession,
         session,
@@ -183,7 +234,6 @@ var Supabase = (() => {
   // supabase-mini/src/request.js
   var require_request = __commonJS({
     "supabase-mini/src/request.js"(exports, module) {
-      var DEFAULT_TIMEOUT = 3e4;
       var refreshingPromisesByClient = /* @__PURE__ */ new WeakMap();
       function getSessionValue(client, key) {
         if (client && client[key]) {
@@ -205,6 +255,7 @@ var Supabase = (() => {
         const headers = {
           ...options.headers
         };
+        headers["Accept-Encoding"] = "identity";
         const method = (options.method || "GET").toUpperCase();
         const hasBody = options.body !== void 0 && options.body !== null;
         if (hasBody && !headers["Content-Type"] && !headers["content-type"]) {
@@ -266,30 +317,7 @@ var Supabase = (() => {
       }
       function shouldRefreshRequest(path) {
         const normalizedPath = String(path).replace(/^https?:\/\/[^/]+\//, "").replace(/^\//, "");
-        return normalizedPath.startsWith("rest/v1/") || normalizedPath.startsWith("functions/v1/") || normalizedPath === "auth/v1/user";
-      }
-      function fetchWithTimeout(url, options, timeout = DEFAULT_TIMEOUT) {
-        if (timeout <= 0) {
-          return fetch(url, options);
-        }
-        let timeoutId;
-        const timeoutPromise = new Promise((_, reject) => {
-          timeoutId = setTimeout(() => {
-            const error = new Error(`Request timed out after ${timeout}ms: ${url}`);
-            error.name = "TimeoutError";
-            reject(error);
-          }, timeout);
-        });
-        return Promise.race([fetch(url, options), timeoutPromise]).then(
-          (response) => {
-            clearTimeout(timeoutId);
-            return response;
-          },
-          (error) => {
-            clearTimeout(timeoutId);
-            throw error;
-          }
-        );
+        return normalizedPath.startsWith("rest/v1/") || normalizedPath.startsWith("functions/v1/") || normalizedPath === "auth/v1/user" || normalizedPath.startsWith("auth/v1/user?");
       }
       async function refreshSession(baseUrl, apiKey, client = null) {
         if (!client) {
@@ -339,7 +367,6 @@ var Supabase = (() => {
           throw new Error("request(): baseUrl is required in options or client");
         }
         const url = path.startsWith("http") ? path : `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
-        const timeout = options.timeout != null ? options.timeout : DEFAULT_TIMEOUT;
         const fetchOptions = {
           method: options.method || "GET",
           headers: buildHeaders(options, client)
@@ -350,11 +377,8 @@ var Supabase = (() => {
         }
         let response;
         try {
-          response = await fetchWithTimeout(url, fetchOptions, timeout);
+          response = await fetch(url, fetchOptions);
         } catch (networkError) {
-          if (networkError.name === "TimeoutError") {
-            throw networkError;
-          }
           throw new Error(`Network error while requesting ${url}: ${networkError.message}`);
         }
         const normalized = await normalizeResponse(response);
@@ -995,3 +1019,6 @@ var Supabase = (() => {
   });
   return require_src();
 })();
+// 启动脚本时创建Supabase实例，并将其赋值给环境变量supabase
+const supabase = Supabase.createClient("https://rftynrclbvnmemjvmrmx.supabase.co", "sb_publishable_vbOO5YSdR2C1mi_sWDmrhQ_nbdur_FE")
+zdjl.setVar("supabase", supabase);

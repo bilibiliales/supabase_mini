@@ -61,15 +61,45 @@ const session = supabase.auth.session();
 - `signIn({ email, password })`
 - `refresh(refreshToken)`
 - `getUser()`
-- `logout()`
+- `signOut(options)`
 - `saveSession(session)`
 - `clearSession()`
 - `session()`
 - `getSession()`
 - `getAccessToken()`
 - `getRefreshToken()`
+- `updateUser(attributes, options)`
 
 `signUp`、`signIn`、`refresh` 返回 session 后，会写入当前 client。可以通过 `supabase.auth.session()` 或 `supabase.getSession()` 显式查看。
+
+更新当前登录用户资料或密码：
+
+```js
+await supabase.auth.updateUser({
+  password: 'new_password',
+});
+
+await supabase.auth.updateUser({
+  password: 'new_password',
+  currentPassword: 'old_password',
+});
+```
+
+也可以更新 email、phone 或 metadata：
+
+```js
+await supabase.auth.updateUser(
+  {
+    email: 'new@example.com',
+    data: { display_name: 'Ada' },
+  },
+  {
+    emailRedirectTo: 'https://example.com/account',
+  }
+);
+```
+
+`updateUser` 需要当前 client 已有有效登录 session，并会触发 `USER_UPDATED`。
 
 监听 auth 状态变化：
 
@@ -87,6 +117,7 @@ subscription.unsubscribe();
 - `SIGNED_IN`
 - `SIGNED_OUT`
 - `TOKEN_REFRESHED`
+- `USER_UPDATED`
 
 注册监听器后会异步收到一次 `INITIAL_SESSION`，session 参数为当前已恢复的 session 或 `null`。这表示 SDK 初始化后的当前状态，不代表用户刚刚登录。
 
@@ -99,6 +130,16 @@ supabase.auth.saveSession(session, {
 ```
 
 当 session 为空时，SDK 会删除持久化存储，不会写入 `"null"` 字符串。
+
+登出：
+
+```js
+await supabase.auth.signOut(); // default: global
+await supabase.auth.signOut({ scope: 'local' });
+await supabase.auth.signOut({ scope: 'others' });
+```
+
+`global` 会终止该用户的所有 session，`local` 只终止当前 session，`others` 会终止除当前 session 外的其它 session。`global/local` 会清除当前 client 的本地 session 并触发 `SIGNED_OUT`；`others` 会保留当前 client session。
 
 session 会自动持久化。脚本环境优先使用：
 
@@ -189,9 +230,9 @@ request(): request must be bound to a Supabase client
 
 同一个 client 内并发刷新时，只会发出一个 refresh 请求。不同 client 即使 refresh token 相同，也不会共用 refresh promise。
 
-refresh 成功后会先写回当前 client session，再用 client 上的新 access token 重试请求。如果 refresh 过程中该 client 已经 logout 或 session 被替换，旧 refresh 结果不会复活已失效 session。
+refresh 成功后会先写回当前 client session，再用 client 上的新 access token 重试请求。如果 refresh 过程中该 client 已经 signOut 或 session 被替换，旧 refresh 结果不会复活已失效 session。
 
-只有 `rest/v1/*`、`functions/v1/*`、`auth/v1/user` 的 401 会触发自动 refresh。`signIn`、`signUp`、`refresh`、`logout` 等 Auth 接口自身的 401 不会触发 refresh。
+只有 `rest/v1/*`、`functions/v1/*`、`auth/v1/user` 的 401 会触发自动 refresh。`signIn`、`signUp`、`refresh`、`signOut` 等 Auth 接口自身的 401 不会触发 refresh。
 
 ## Timeout
 
