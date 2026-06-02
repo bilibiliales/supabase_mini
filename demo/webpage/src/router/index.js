@@ -27,21 +27,35 @@ const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes
 })
 
 // 路由守卫
+/*
 router.beforeEach(async (to, from, next) => {
-  const { data: { session } } = await supabase.auth.getSession()
+  console.log('进入守卫', to.path)
 
-  if (to.meta.requiresAuth && !session) {
-    next('/login')
-  } else if (to.path === '/login' && session) {
-    next('/profile')
-  } else {
+  try {
+    const {
+      data: { session }
+    } = await supabase.auth.getSession()
+
+    console.log('session=', session)
+
+    if (to.meta.requiresAuth && !session) {
+      next('/login')
+    } else if (to.path === '/login' && session) {
+      next('/profile')
+    } else {
+      next()
+    }
+  } catch (e) {
+    console.error('路由守卫异常', e)
+
     next()
   }
 })
+*/
 
 export default router

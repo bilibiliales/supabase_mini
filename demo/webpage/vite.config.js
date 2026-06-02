@@ -14,5 +14,5 @@ export default defineConfig({
       resolvers: [ElementPlusResolver()],
     }),
   ],
-  base: './'
+  base: '/supabase_mini/'
 })
