@@ -1,8 +1,6 @@
 demo - Supabase Edge Functions
 
-本目录包含 5 个边缘函数的占位实现、源码结构与相关 SQL 查询，便于本地开发、测试与替换为远端下载的实现。
-
-Publishable key: sb_publishable_vbOO5YSdR2C1mi_sWDmrhQ_nbdur_FE
+本目录包含 5 个边缘函数的占位实现、源码结构与相关 SQL 查询，便于本地开发、测试与替换为远端下载的实现。已公开边缘函数、表结构 SQL、RLS、ZDJL 演示脚本以及本地浏览器前端源码。
 
 目录结构（已存在）：
 
@@ -13,6 +11,11 @@ Publishable key: sb_publishable_vbOO5YSdR2C1mi_sWDmrhQ_nbdur_FE
 - [function/update-profile/source/index.ts](function/update-profile/source/index.ts#L1)
 - [query/profiles.sql](query/profiles.sql#L1)
 - [query/rls.sql](query/rls.sql#L1)
+- [zdjl/supabase封装版.zjs](zdjl/supabase封装版.zjs#L1)
+- [webpage/README.md](webpage/README.md#L1)
+- [webpage/index.html](webpage/index.html#L1)
+- [webpage/app.js](webpage/app.js#L1)
+- [webpage/style.css](webpage/style.css#L1)
 
 Supabase CLI 常用命令（在项目根或想存放函数的目录运行）：
 
@@ -42,11 +45,10 @@ supabase functions delete admin-list-users
 ```bash
 curl -X POST \
 	-H "Content-Type: application/json" \
-	-H "Authorization: Bearer sb_publishable_vbOO5YSdR2C1mi_sWDmrhQ_nbdur_FE" \
-	https://rftynrclbvnmemjvmrmx.supabase.co/functions/v1/admin-list-users
+	-H "Authorization: Bearer sb_publishable_xxx" \
+	https://xxx.supabase.co/functions/v1/admin-list-users
 ```
 
 备注：
 - `publishable`（公开）密钥只能用于客户端动作和公开接口；执行 `supabase functions download` / `deploy` / 管理操作通常需要具有更高权限的 `service_role` key 或在 supabase CLI 中以可访问该项目的账号登录。
-- 若你希望我替换占位代码为从远端下载的真实代码，请提供具有下载权限的 service_role 密钥，或在本机完成 `supabase login` 并授权后让我执行下载命令。
 
